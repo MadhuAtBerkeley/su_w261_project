@@ -72,7 +72,7 @@
 
 # COMMAND ----------
 
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, when
 
 # COMMAND ----------
 
@@ -85,9 +85,198 @@ display(dbutils.fs.ls("/mnt/mids-w261/datasets_final_project"))
 
 # COMMAND ----------
 
+
 # Load 2015 Q1 for Flights
-df_airlines = spark.read.parquet("/mnt/mids-w261/datasets_final_project/parquet_airlines_data_3m/")
+df_airlines = spark.read.parquet("/mnt/mids-w261/datasets_final_project/parquet_airlines_data_6m/")
 display(df_airlines)
+
+# COMMAND ----------
+
+df = df_airlines.where((col('CANCELLED') != 1) | ((col('DEP_DELAY').isNotNull()) & (col('ORIGIN') == 'ORD') | (col('ORIGIN') == 'ATL')))
+
+df = df.select("MONTH", "DAY_OF_WEEK", "FL_DATE", "OP_CARRIER", "TAIL_NUM", "CRS_DEP_TIME", "DEP_TIME", "DEP_DELAY", "CRS_ARR_TIME")
+
+from pyspark.sql.types import IntegerType
+from pyspark.sql.functions import udf, struct
+from pyspark.sql.functions import weekofyear
+
+def flight_time(x, y):
+   
+    xH = int(x/100)
+    yH = int(y/100)
+    xM = x % 100
+    yM = y % 100
+    if(x > y):
+        fl_time = int((xH-yH)*60+(xM-yM))
+    else:
+        xM = 60 + xM
+        fl_time = int((23+xH-yH)*60+(xM-yM))
+      
+    return fl_time
+
+comp_fn = udf(flight_time, IntegerType())
+  
+df = df.withColumn("FLIGHT_TIME_MINS", comp_fn("CRS_ARR_TIME","CRS_DEP_TIME"))
+df = df.withColumn("WEEK_OF_YEAR", weekofyear("FL_DATE"))
+tmp_tbl_name = 'airline_sql_tbl'
+df_airlines.createOrReplaceTempView(tmp_tbl_name)
+
+df.display()
+
+# COMMAND ----------
+
+df.printSchema()
+
+# COMMAND ----------
+
+df_delay_week = df.groupBy("WEEK_OF_YEAR").avg("DEP_DELAY")
+df_delay_week = df_delay_week.sort('WEEK_OF_YEAR')
+display(df_delay_week)
+print(df_delay_week.columns)
+
+# COMMAND ----------
+
+df_delay_op_ord = df.where(col('ORIGIN')== 'ORD').groupBy("OP_CARRIER").avg("DEP_DELAY")
+df_delay_op_atl = df.where(col('ORIGIN')== 'ATL').groupBy("OP_CARRIER").avg("DEP_DELAY")
+ord_delay = [row[0] for row in df_delay_op_ord.select("avg(DEP_DELAY)").collect()]
+atl_delay = [row[0] for row in df_delay_op_atl.select("avg(DEP_DELAY)").collect()]
+op_ord = [row[0] for row in df_delay_op_atl.select("OP_CARRIER").collect()]
+print(op_list)
+
+# COMMAND ----------
+
+display(df_delay_op_atl)
+display(df_delay_op_ord)
+
+# COMMAND ----------
+
+import matplotlib.pyplot as plt
+op_ord = [row[0] for row in df_delay_op_ord.select("OP_CARRIER").collect()]
+op_atl = [row[0] for row in df_delay_op_atl.select("OP_CARRIER").collect()]
+plt.plot(op_ord, ord_delay, color='r', label='ORD')
+plt.plot(op_atl, atl_delay, color='g', label='ATL')
+plt.xlabel("CARRIER")
+plt.ylabel("Avg(Delay)")
+plt.title("Avg Delay vs CARRIER")
+plt.legend()
+
+# COMMAND ----------
+
+df_delay_day = df.groupBy("DAY_OF_WEEK").avg("DEP_DELAY")
+df_delay_day = df_delay_day.orderBy("DAY_OF_WEEK")
+display(df_delay_day)
+
+df_delay_day = df.where((col('ORIGIN') == 'ORD')).groupBy("DAY_OF_WEEK").avg("DEP_DELAY")
+df_delay_day = df_delay_day.orderBy("DAY_OF_WEEK")
+display(df_delay_day)
+
+
+# COMMAND ----------
+
+df_delay_fltime= df.groupBy("FLIGHT_TIME_MINS").avg("DEP_DELAY")
+df_delay_fltime = df_delay_fltime.orderBy("FLIGHT_TIME_MINS")
+display(df_delay_fltime)
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC select * from airline_sql_tbl
+
+# COMMAND ----------
+
+df_airlines.printSchema()
+
+# COMMAND ----------
+
+#df = df_airlines.filter(df_airlines['CANCELLED'] != 1 && df_airlines['ARR_TIME'].isNotNull())
+df = df_airlines.filter( (df_airlines['ORIGIN'] == 'ORD') | (df_airlines['ORIGIN'] == 'ATL'))
+df = df.select("DEP_TIME", "DEP_DELAY")
+dict_null = {col:df.filter(df[col].isNull()).count() for col in df.columns}
+print(dict_null)
+
+
+# COMMAND ----------
+
+df = df_airlines.filter((df_airlines['ORIGIN'] == 'ORD') | (df_airlines['ORIGIN'] == 'ATL'))
+df = df.select('CARRIER_DELAY', 'WEATHER_DELAY', 'NAS_DELAY', 'SECURITY_DELAY', 'LATE_AIRCRAFT_DELAY', 'CANCELLED', 'DIVERTED')
+df = df.fillna(0)
+df = df.withColumn("ON_TIME", (1- (df['CARRIER_DELAY'] + df['WEATHER_DELAY'] +df['NAS_DELAY'] +df['SECURITY_DELAY'] +df['CANCELLED'] +df['LATE_AIRCRAFT_DELAY'] +df['DIVERTED'])))
+
+cols = df.columns # list of all columns
+for col in cols:
+    df= df.withColumn(col, when(df[col]>0,1).otherwise(0))
+df1 = df.groupBy().sum().first()
+val = [df1[i] for i in range(len(cols))]
+
+
+# COMMAND ----------
+
+import numpy as np
+import matplotlib.pyplot as plt
+val = np.array(val)
+cols = np.char.array(cols)
+color = ['grey','lightcoral','green','red','blue','violet','magenta','cyan']
+per_cent = 100.*val/val.sum()
+patches, texts = plt.pie(val, colors=color, startangle=90, radius=1.5)
+labels = ['{0} - {1:1.2f} %'.format(i,j) for i,j in zip(cols, per_cent)]
+sort_legend = True
+if sort_legend:
+    patches, labels, dummy =  zip(*sorted(zip(patches, labels, val),
+                                          key=lambda x: x[2],
+                                          reverse=True))
+
+plt.legend(patches, labels, loc='best', bbox_to_anchor=(-0.1, 1.),
+           fontsize=8)
+
+plt.show()
+
+# COMMAND ----------
+
+# install packages
+%pip install timezonefinder
+
+# COMMAND ----------
+
+
+
+
+# COMMAND ----------
+
+val = [df1[i] for i in range(8)]
+temp = list(zip(cols, val))
+df2 = sc.parallelize(temp).toDF(("Delay Type", "Delay"))
+display(df2)
+
+
+# COMMAND ----------
+
+print(cols)
+
+# COMMAND ----------
+
+from pyspark.sql import Row
+salesEntryDataFrame = sqlContext.createDataFrame(sc.parallelize([
+  Row(category="fruits_and_vegetables", product="apples", year=2012, salesAmount=100.50),
+  Row(category="fruits_and_vegetables", product="oranges", year=2012, salesAmount=100.75),
+  Row(category="fruits_and_vegetables", product="apples", year=2013, salesAmount=200.25),
+  Row(category="fruits_and_vegetables", product="oranges", year=2013, salesAmount=300.65),
+  Row(category="fruits_and_vegetables", product="apples", year=2014, salesAmount=300.65),
+  Row(category="fruits_and_vegetables", product="oranges", year=2015, salesAmount=100.35),
+  Row(category="butcher_shop", product="beef", year=2012, salesAmount=200.50),
+  Row(category="butcher_shop", product="chicken", year=2012, salesAmount=200.75),
+  Row(category="butcher_shop", product="pork", year=2013, salesAmount=400.25),
+  Row(category="butcher_shop", product="beef", year=2013, salesAmount=600.65),
+  Row(category="butcher_shop", product="beef", year=2014, salesAmount=600.65),
+  Row(category="butcher_shop", product="chicken", year=2015, salesAmount=200.35),
+  Row(category="misc", product="gum", year=2012, salesAmount=400.50),
+  Row(category="misc", product="cleaning_supplies", year=2012, salesAmount=400.75),
+  Row(category="misc", product="greeting_cards", year=2013, salesAmount=800.25),
+  Row(category="misc", product="kitchen_utensils", year=2013, salesAmount=1200.65),
+  Row(category="misc", product="cleaning_supplies", year=2014, salesAmount=1200.65),
+  Row(category="misc", product="cleaning_supplies", year=2015, salesAmount=400.35)
+]))
+salesEntryDataFrame.registerTempTable("test_sales_table")
+display(sqlContext.sql("select * from test_sales_table"))
 
 # COMMAND ----------
 
