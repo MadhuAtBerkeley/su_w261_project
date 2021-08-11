@@ -183,8 +183,7 @@ def flight_duration(x, y):
         fl_time = int((23+xH-yH)*60+(xM-yM))
       
     return fl_time
-
-# Map two ORIGIN airports  
+  
 def origin_map(x):
     return (1 if (x=='ATL') else 2)
    
@@ -207,8 +206,9 @@ print(df.columns)
 
 # COMMAND ----------
 
-features = ['OP_CARRIER', 'CRS_DEP_TIME_QUANT', 'ORIGIN', 'DEST_AIRPORT_ID', 'DAY_OF_WEEK', 'WEEK_OF_YEAR', 'FLIGHT_TIME_MINS', 'YEAR',
+features = ['OP_CARRIER', 'CRS_DEP_TIME_QUANT', 'ORIGIN', 'DEST_AIRPORT_ID', 'DAY_OF_WEEK', 'WEEK_OF_YEAR', 'FLIGHT_TIME_MINS', 'YEAR','FL_DATE', 'CRS_DEP_TIME', 'MONTH',
             'Src_WND_0', 'Src_WND_3', 'Src_TMP_0', 'Src_VIS_0', 'Src_DEW_0', 'DEP_DEL15']
+
 
 
 df_delay_day = df.groupBy("DAY_OF_WEEK").sum("DEP_DEL15")
@@ -224,20 +224,6 @@ avg_delay_carr = df_delay_carr.select(['OP_CARRIER', 'sum(DEP_DEL15)']).rdd.map(
 avg_delay_time = df_delay_time.select(['CRS_DEP_TIME_QUANT', 'sum(DEP_DEL15)']).rdd.map(lambda x:(x[0], x[1])).collect()
 avg_delay_dst = df_delay_dst.select(['DEST_AIRPORT_ID', 'sum(DEP_DEL15)']).rdd.map(lambda x:(x[0], x[1])).collect()
 
-avg_delay_day = sorted(avg_delay_day, key=lambda x:x[1])
-avg_delay_day = [(avg_delay_day[i][0], i+1 ) for i in range(len(avg_delay_day))]
-
-avg_delay_week = sorted(avg_delay_week, key=lambda x:x[1])
-avg_delay_week = [(avg_delay_week[i][0], i+1 ) for i in range(len(avg_delay_week))]
-
-avg_delay_carr = sorted(avg_delay_carr, key=lambda x:x[1])
-avg_delay_carr = [(avg_delay_carr[i][0], i+1 ) for i in range(len(avg_delay_carr))]
-
-avg_delay_time = sorted(avg_delay_time, key=lambda x:x[1])
-avg_delay_time = [(avg_delay_time[i][0], i+1 ) for i in range(len(avg_delay_time))]
-
-avg_delay_dst = sorted(avg_delay_dst, key=lambda x:x[1])
-avg_delay_dst = [(avg_delay_dst[i][0], i+1 ) for i in range(len(avg_delay_dst))]
                                                                                   
 avg_delay_day = {x[0]:x[1] for x in avg_delay_day}    
 avg_delay_week = {x[0]:x[1] for x in avg_delay_week}                                                                                   
@@ -253,7 +239,7 @@ def target_en_week(x):
    return avg_delay_week[x]
   
 def target_en_time(x):
-    return avg_delay_time[x]
+   return avg_delay_time[x]
   
 def target_en_dst(x):
    return avg_delay_dst[x]
@@ -261,11 +247,11 @@ def target_en_dst(x):
 def target_en_carr(x):
    return avg_delay_carr[x]  
   
-call_fn_day = udf(target_en_day, IntegerType())  
-call_fn_week = udf(target_en_week, IntegerType())
-call_fn_time = udf(target_en_time, IntegerType())
-call_fn_dst = udf(target_en_dst, IntegerType())
-call_fn_carr = udf(target_en_carr, IntegerType())
+call_fn_day = udf(target_en_day, DoubleType())  
+call_fn_week = udf(target_en_week, DoubleType())
+call_fn_time = udf(target_en_time, DoubleType())
+call_fn_dst = udf(target_en_dst, DoubleType())
+call_fn_carr = udf(target_en_carr, DoubleType())
 
 
 df =  df.select(*features) \
@@ -275,11 +261,44 @@ df =  df.select(*features) \
         .withColumn('DAY_OF_WEEK', call_fn_day('DAY_OF_WEEK')) \
         .withColumn('DEST_AIRPORT_ID', call_fn_dst('DEST_AIRPORT_ID')) 
  
-
+#avg_delay_dst = df_delay_carr.select([]).rdd.map(lambda x:{}).collect()
+#avg_delay_carr = df_delay_carr.select([]).rdd.map(lambda x:{}).collect()
+#print(avg_delay_week)
+#print(avg_delay_carr)
+#print(avg_delay_time)
+#print(avg_delay_dst)
 
 # COMMAND ----------
 
-print(df.take(4))
+  
+def target_en_day(x):
+   return avg_delay_day[x]
+  
+def target_en_week(x):
+   return avg_delay_week[x]
+  
+def target_en_time(x):
+   return avg_delay_time[x]
+  
+def target_en_dst(x):
+   return avg_delay_dst[x]
+  
+def target_en_carr(x):
+   return avg_delay_carr[x]  
+  
+call_fn_day = udf(target_en_day, DoubleType())  
+call_fn_week = udf(target_en_week, DoubleType())
+call_fn_time = udf(target_en_time, DoubleType())
+call_fn_dst = udf(target_en_dst, DoubleType())
+call_fn_carr = udf(target_en_carr, DoubleType())
+
+
+df1 = df.select(*features) \
+        .withColumn('OP_CARRIER', call_fn_carr('OP_CARRIER')) \
+        .withColumn('CRS_DEP_TIME_QUANT', call_fn_time('CRS_DEP_TIME_QUANT')) \
+        .withColumn('WEEK_OF_YEAR', call_fn_week('WEEK_OF_YEAR')) \
+        .withColumn('DAY_OF_WEEK', call_fn_day('DAY_OF_WEEK')) \
+        .withColumn('DEST_AIRPORT_ID', call_fn_dst('DEST_AIRPORT_ID')) 
 
 # COMMAND ----------
 
@@ -452,12 +471,13 @@ def evaluation(trainRDD, testRDD, W, threshold=0.5):
 
 # COMMAND ----------
 
+features = ['OP_CARRIER', 'CRS_DEP_TIME_QUANT', 'ORIGIN', 'DEST_AIRPORT_ID', 'DAY_OF_WEEK', 'WEEK_OF_YEAR', 'FLIGHT_TIME_MINS',
+            'Src_WND_0', 'Src_WND_3', 'Src_TMP_0', 'Src_VIS_0', 'Src_DEW_0', 'DEP_DEL15']
 
+df = df.orderBy('FL_DATE', 'CRS_DEP_TIME')
 
-# Generate 80/20 (pseudo)random train/test split - RUN THIS CELL AS IS
-#df1 = df1.select(*features)
-trainRDD, heldOutRDD = df.randomSplit([0.8,0.2], seed = 1)
-print(f"... held out {heldOutRDD.count()} records for evaluation and assigned {trainRDD.count()} for training.")
+trainRDD = (df.where((col('YEAR') == 2019) & (col('MONTH')<4)))
+heldOutRDD = df.where((col('YEAR') == 2019) & (col('MONTH')>=4) & (col('MONTH')<5))
 
 df_minority = trainRDD.where(col('DEP_DEL15') == 1)
 df_majority = trainRDD.where(col('DEP_DEL15') == 0)
@@ -467,6 +487,10 @@ df_sampled_major = df_majority.sample(False, 0.25)
 
 # create new dataframe with undersampled DEP_DEL15=0 and all records DEP_DEL15=1
 trainRDD = df_sampled_major.union(df_minority)
+
+trainRDD = trainRDD.orderBy('FL_DATE', 'CRS_DEP_TIME')
+trainRDD = trainRDD.select(*features)
+heldOutRDD = heldOutRDD.select(*features)
 
 trainRDD = trainRDD.rdd.map(lambda x: list(x))
 trainRDDCached = trainRDD.map(lambda x: (np.array(x[0:-1]), x[-1])).cache()
@@ -513,7 +537,7 @@ w_base = model
 # COMMAND ----------
 
 W = model
-threshold = 0.515  
+threshold = 0.47
 evaluation(trainRDDCached, heldOutRDDCached, W, threshold)
 
 
@@ -719,7 +743,7 @@ threshold = 0.54
 #augHeldOutRDD = normedTestRDD.map(lambda x: (np.append([1.0], x[0]), x[1]))
 predRDD = augHeldOutRDD.map(lambda x: 1 if (predicted(W,x[0]) > threshold) else 0)
 #trueRDD = augHeldOutRDD.map(lambda x: x[1])
-y_pred = predRDD.collect()
+#y_pred = predRDD.collect()
 #y_true = trueRDD.collect()
 
 print("F1-score: {}".format(f1_score(y_true, y_pred, average='micro')))
@@ -738,3 +762,14 @@ plt.show()
 
 from sklearn.metrics import fbeta_score
 fbeta_score(y_true, y_pred, average='weighted', beta=2.0)
+
+# COMMAND ----------
+
+df = df.orderBy('FL_DATE', 'CRS_DEP_TIME')
+print(df.columns)
+from pandas.plotting import lag_plot
+df1 = df.filter(col('ORIGIN') == 1)
+df1 = df1.toPandas()
+plt.figure()
+lag_plot(df1['DEP_DELAY'], lag=2)
+plt.show()

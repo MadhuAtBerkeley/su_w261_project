@@ -122,7 +122,6 @@ import pyspark.sql.functions as F
 
 from sklearn.metrics import classification_report
 from sklearn.metrics import confusion_matrix
-from sklearn.metrics import f1_score
 
 
 pd.set_option('display.max_rows', 999)
@@ -183,8 +182,7 @@ def flight_duration(x, y):
         fl_time = int((23+xH-yH)*60+(xM-yM))
       
     return fl_time
-
-# Map two ORIGIN airports  
+  
 def origin_map(x):
     return (1 if (x=='ATL') else 2)
    
@@ -207,7 +205,7 @@ print(df.columns)
 
 # COMMAND ----------
 
-features = ['OP_CARRIER', 'CRS_DEP_TIME_QUANT', 'ORIGIN', 'DEST_AIRPORT_ID', 'DAY_OF_WEEK', 'WEEK_OF_YEAR', 'FLIGHT_TIME_MINS', 'YEAR',
+features = ['OP_CARRIER', 'CRS_DEP_TIME_QUANT', 'ORIGIN', 'DEST_AIRPORT_ID', 'DAY_OF_WEEK', 'WEEK_OF_YEAR', 'FLIGHT_TIME_MINS', 'YEAR','FL_DATE', 'CRS_DEP_TIME', 'MONTH',
             'Src_WND_0', 'Src_WND_3', 'Src_TMP_0', 'Src_VIS_0', 'Src_DEW_0', 'DEP_DEL15']
 
 
@@ -224,20 +222,6 @@ avg_delay_carr = df_delay_carr.select(['OP_CARRIER', 'sum(DEP_DEL15)']).rdd.map(
 avg_delay_time = df_delay_time.select(['CRS_DEP_TIME_QUANT', 'sum(DEP_DEL15)']).rdd.map(lambda x:(x[0], x[1])).collect()
 avg_delay_dst = df_delay_dst.select(['DEST_AIRPORT_ID', 'sum(DEP_DEL15)']).rdd.map(lambda x:(x[0], x[1])).collect()
 
-avg_delay_day = sorted(avg_delay_day, key=lambda x:x[1])
-avg_delay_day = [(avg_delay_day[i][0], i+1 ) for i in range(len(avg_delay_day))]
-
-avg_delay_week = sorted(avg_delay_week, key=lambda x:x[1])
-avg_delay_week = [(avg_delay_week[i][0], i+1 ) for i in range(len(avg_delay_week))]
-
-avg_delay_carr = sorted(avg_delay_carr, key=lambda x:x[1])
-avg_delay_carr = [(avg_delay_carr[i][0], i+1 ) for i in range(len(avg_delay_carr))]
-
-avg_delay_time = sorted(avg_delay_time, key=lambda x:x[1])
-avg_delay_time = [(avg_delay_time[i][0], i+1 ) for i in range(len(avg_delay_time))]
-
-avg_delay_dst = sorted(avg_delay_dst, key=lambda x:x[1])
-avg_delay_dst = [(avg_delay_dst[i][0], i+1 ) for i in range(len(avg_delay_dst))]
                                                                                   
 avg_delay_day = {x[0]:x[1] for x in avg_delay_day}    
 avg_delay_week = {x[0]:x[1] for x in avg_delay_week}                                                                                   
@@ -253,7 +237,7 @@ def target_en_week(x):
    return avg_delay_week[x]
   
 def target_en_time(x):
-    return avg_delay_time[x]
+   return avg_delay_time[x]
   
 def target_en_dst(x):
    return avg_delay_dst[x]
@@ -261,11 +245,11 @@ def target_en_dst(x):
 def target_en_carr(x):
    return avg_delay_carr[x]  
   
-call_fn_day = udf(target_en_day, IntegerType())  
-call_fn_week = udf(target_en_week, IntegerType())
-call_fn_time = udf(target_en_time, IntegerType())
-call_fn_dst = udf(target_en_dst, IntegerType())
-call_fn_carr = udf(target_en_carr, IntegerType())
+call_fn_day = udf(target_en_day, DoubleType())  
+call_fn_week = udf(target_en_week, DoubleType())
+call_fn_time = udf(target_en_time, DoubleType())
+call_fn_dst = udf(target_en_dst, DoubleType())
+call_fn_carr = udf(target_en_carr, DoubleType())
 
 
 df =  df.select(*features) \
@@ -275,11 +259,115 @@ df =  df.select(*features) \
         .withColumn('DAY_OF_WEEK', call_fn_day('DAY_OF_WEEK')) \
         .withColumn('DEST_AIRPORT_ID', call_fn_dst('DEST_AIRPORT_ID')) 
  
-
+#avg_delay_dst = df_delay_carr.select([]).rdd.map(lambda x:{}).collect()
+#avg_delay_carr = df_delay_carr.select([]).rdd.map(lambda x:{}).collect()
+#print(avg_delay_week)
+#print(avg_delay_carr)
+#print(avg_delay_time)
+#print(avg_delay_dst)
 
 # COMMAND ----------
 
-print(df.take(4))
+ 
+
+def target_en_day(x):
+   return avg_delay_day[x]
+  
+def target_en_week(x):
+   return avg_delay_week[x]
+  
+def target_en_time(x):
+   return avg_delay_time[x]
+  
+def target_en_dst(x):
+   return avg_delay_dst[x]
+  
+def target_en_carr(x):
+   return avg_delay_carr[x]  
+  
+call_fn_day = udf(target_en_day, DoubleType())  
+call_fn_week = udf(target_en_week, DoubleType())
+call_fn_time = udf(target_en_time, DoubleType())
+call_fn_dst = udf(target_en_dst, DoubleType())
+call_fn_carr = udf(target_en_carr, DoubleType())
+
+
+df1 = df.select(*features) \
+        .withColumn('OP_CARRIER', call_fn_carr('OP_CARRIER')) \
+        .withColumn('CRS_DEP_TIME_QUANT', call_fn_time('CRS_DEP_TIME_QUANT')) \
+        .withColumn('WEEK_OF_YEAR', call_fn_week('WEEK_OF_YEAR')) \
+        .withColumn('DAY_OF_WEEK', call_fn_day('DAY_OF_WEEK')) \
+        .withColumn('DEST_AIRPORT_ID', call_fn_dst('DEST_AIRPORT_ID')) 
+
+# COMMAND ----------
+
+# MAGIC %md ## Train/Test Split
+
+# COMMAND ----------
+
+df = df.orderBy('FL_DATE', 'CRS_DEP_TIME')
+
+# COMMAND ----------
+
+features = ['OP_CARRIER', 'CRS_DEP_TIME_QUANT', 'ORIGIN', 'DEST_AIRPORT_ID', 'DAY_OF_WEEK', 'WEEK_OF_YEAR', 'FLIGHT_TIME_MINS',
+            'Src_WND_0', 'Src_WND_3', 'Src_TMP_0', 'Src_VIS_0', 'Src_DEW_0', 'DEP_DEL15']
+
+# Generate 80/20 (pseudo)random train/test split - RUN THIS CELL AS IS
+#df1 = df1.select(*features)
+#trainRDD, heldOutRDD = df.randomSplit([0.8,0.2], seed = 1)
+#print(f"... held out {heldOutRDD.count()} records for evaluation and assigned {trainRDD.count()} for training.")
+
+trainRDD = (df.where((col('YEAR') == 2019) & (col('MONTH')<7)))
+heldOutRDD = df.where((col('YEAR') == 2019) & (col('MONTH')>=7) & (col('MONTH')<9))
+
+
+
+df_minority = trainRDD.where(col('DEP_DEL15') == 1)
+df_majority = trainRDD.where(col('DEP_DEL15') == 0)
+
+# undersample the records corresponding to not delayed flights according to the ratio 1:4
+df_sampled_major = df_majority.sample(False, 0.25)
+
+# create new dataframe with undersampled DEP_DEL15=0 and all records DEP_DEL15=1
+trainRDD = df_sampled_major.union(df_minority)
+
+trainRDD = trainRDD.orderBy('FL_DATE', 'CRS_DEP_TIME')
+trainRDD = trainRDD.select(*features)
+heldOutRDD = heldOutRDD.select(*features)
+
+trainRDD = trainRDD.rdd.map(lambda x: list(x))
+trainRDDCached = trainRDD.map(lambda x: (np.array(x[0:-1]), x[-1])).cache()
+
+heldOutRDD = heldOutRDD.rdd.map(lambda x: list(x))
+heldOutRDDCached = heldOutRDD.map(lambda x: (np.array(x[0:-1]), x[-1])).cache()
+
+trainRDDCached.take(1)
+                 
+
+# COMMAND ----------
+
+
+trainRDD = trainRDD.rdd.map(lambda x: list(x))
+trainRDDCached = trainRDD.map(lambda x: (np.array(x[0:-1]), x[-1])).cache()
+
+# COMMAND ----------
+
+heldOutRDD = heldOutRDD.rdd.map(lambda x: list(x))
+heldOutRDDCached = heldOutRDD.map(lambda x: (np.array(x[0:-1]), x[-1])).cache()
+
+# COMMAND ----------
+
+# MAGIC %md # Running the algorithm
+
+# COMMAND ----------
+
+# part a - mean and variance of the outcome variable 
+
+meanQuality = trainRDDCached.map(lambda x: x[1]).mean()
+varQuality = trainRDDCached.map(lambda x: x[1]).variance()
+
+print(f"Mean: {meanQuality}")
+print(f"Variance: {varQuality}")
 
 # COMMAND ----------
 
@@ -315,6 +403,12 @@ def crossEntropyLoss(dataRDD, W):
   
   
   
+
+# COMMAND ----------
+
+# part e - define your baseline model here
+BASELINE = np.append([meanQuality], np.zeros(len(trainRDDCached.take(1)[0][0])))
+#augmentedRDD = trainRDDCached.map(lambda x: (np.append([1.0], x[0]), x[1])).cache()
 
 # COMMAND ----------
 
@@ -366,7 +460,59 @@ def normalize(dataRDD):
 
 # COMMAND ----------
 
-  
+# part d - cache normalized data (RUN THIS CELL AS IS)
+normedRDD = normalize(trainRDDCached).cache()
+
+# COMMAND ----------
+
+# MAGIC %%time
+# MAGIC # part e - take a look at a few GD steps w/ normalized data  (RUN THIS CELL AS IS)
+# MAGIC nSteps = 60
+# MAGIC model = BASELINE
+# MAGIC lr_decay = 0.99
+# MAGIC lr = 0.15
+# MAGIC augmentedRDD = normedRDD.map(lambda x: (np.append([1.0], x[0]), x[1])).cache()
+# MAGIC grad_scale = sc.broadcast(1.0/trainRDDCached.count())
+# MAGIC print(f"BASELINE:  Loss = {crossEntropyLoss(augmentedRDD,model)}")
+# MAGIC for idx in range(nSteps):
+# MAGIC     print("----------")
+# MAGIC     print(f"STEP: {idx+1}")
+# MAGIC     model = GDUpdate(augmentedRDD, model, lr)
+# MAGIC     lr = lr*lr_decay
+# MAGIC     loss = crossEntropyLoss(augmentedRDD, model)
+# MAGIC     print(f"Loss: {loss}")
+# MAGIC     #print(f"Model: {[round(w,3) for w in model]}")
+# MAGIC w_base = model    
+
+# COMMAND ----------
+
+# MAGIC %md ## Evaluation
+
+# COMMAND ----------
+
+W = model
+threshold = 0.57
+def normalizeTestSet(trainRDD, testRDD):
+    featureMeans = trainRDD.map(lambda x: x[0]).mean()
+    featureStdev = np.sqrt(trainRDD.map(lambda x: x[0]).variance())    
+    normedRDD = testRDD.map(lambda x: ((x[0] - featureMeans)/featureStdev,x[1]))
+    
+    return normedRDD
+    
+   
+normedTestRDD = normalizeTestSet(trainRDDCached, heldOutRDDCached).cache()
+augHeldOutRDD = normedTestRDD.map(lambda x: (np.append([1.0], x[0]), x[1]))
+predRDD = augHeldOutRDD.map(lambda x: 1 if (predicted(W,x[0]) > threshold) else 0)
+
+trueRDD = augHeldOutRDD.map(lambda x: x[1])
+
+
+# COMMAND ----------
+
+# MAGIC %md ## Performance Metric
+
+# COMMAND ----------
+
 #SOURCE https://runawayhorse001.github.io/LearningApacheSpark/classification.html
 import matplotlib.pyplot as plt
 import numpy as np
@@ -405,116 +551,24 @@ def plot_confusion_matrix(cm, classes,
     plt.tight_layout()
     plt.ylabel('True label')
     plt.xlabel('Predicted label')
-    
-    
-    
-# Compute evaluation metric
-def evaluation_metric(predRDD, trueRDD):
-    y_pred = predRDD.collect()
-    y_true = trueRDD.collect()
 
-    print("F1-score: {}".format(f1_score(y_true, y_pred, average='micro')))
-    cnf_matrix = confusion_matrix(y_true, y_pred)
-    plt.figure()
-    class_names = ['no_delay', 'delay']
-    plot_confusion_matrix(cnf_matrix, classes=class_names, normalize=True,
+
+# COMMAND ----------
+
+from sklearn.metrics import f1_score
+
+y_pred = predRDD.collect()
+#y_true = trueRDD.collect()
+
+print("F1-score: {}".format(f1_score(y_true, y_pred, average='micro')))
+cnf_matrix = confusion_matrix(y_true, y_pred)
+plt.figure()
+class_names = ['no_delay', 'delay']
+plot_confusion_matrix(cnf_matrix, classes=class_names, normalize=True,
                       title='Confusion matrix, without normalization')
 
-    plt.show()
-    print(classification_report(y_true, y_pred, target_names=class_names))
-    return    
-    
-    
-# Evaluation function    
-def evaluation(trainRDD, testRDD, W, threshold=0.5):
-    
-    def normalizeTestSet(trainRDD, testRDD):
-        featureMeans = trainRDD.map(lambda x: x[0]).mean()
-        featureStdev = np.sqrt(trainRDD.map(lambda x: x[0]).variance())    
-        normedRDD = testRDD.map(lambda x: ((x[0] - featureMeans)/featureStdev,x[1]))
-    
-        return normedRDD
-    
-   
-    normedTestRDD = normalizeTestSet(trainRDD, testRDD)
-    augHeldOutRDD = normedTestRDD.map(lambda x: (np.append([1.0], x[0]), x[1]))
-    predRDD = augHeldOutRDD.map(lambda x: 1 if (predicted(W,x[0]) > threshold) else 0)
-    trueRDD = augHeldOutRDD.map(lambda x: x[1])
-    
-    evaluation_metric(predRDD, trueRDD)
-    return 
-      
-  
-
-# COMMAND ----------
-
-# MAGIC %md ## Train/Test Split
-
-# COMMAND ----------
-
-
-
-# Generate 80/20 (pseudo)random train/test split - RUN THIS CELL AS IS
-#df1 = df1.select(*features)
-trainRDD, heldOutRDD = df.randomSplit([0.8,0.2], seed = 1)
-print(f"... held out {heldOutRDD.count()} records for evaluation and assigned {trainRDD.count()} for training.")
-
-df_minority = trainRDD.where(col('DEP_DEL15') == 1)
-df_majority = trainRDD.where(col('DEP_DEL15') == 0)
-
-# undersample the records corresponding to not delayed flights according to the ratio 1:4
-df_sampled_major = df_majority.sample(False, 0.25)
-
-# create new dataframe with undersampled DEP_DEL15=0 and all records DEP_DEL15=1
-trainRDD = df_sampled_major.union(df_minority)
-
-trainRDD = trainRDD.rdd.map(lambda x: list(x))
-trainRDDCached = trainRDD.map(lambda x: (np.array(x[0:-1]), x[-1])).cache()
-
-heldOutRDD = heldOutRDD.rdd.map(lambda x: list(x))
-heldOutRDDCached = heldOutRDD.map(lambda x: (np.array(x[0:-1]), x[-1])).cache()
-
-trainRDDCached.take(1)
-                 
-
-# COMMAND ----------
-
-# MAGIC %md # Running the algorithm
-
-# COMMAND ----------
-
-
-nSteps = 60
-lr_decay = 0.99
-lr = 0.15
-meanQuality = trainRDDCached.map(lambda x: x[1]).mean()
-BASELINE = np.append([meanQuality], np.zeros(len(trainRDDCached.take(1)[0][0])))
-
-normedRDD = normalize(trainRDDCached).cache()
-augmentedRDD = normedRDD.map(lambda x: (np.append([1.0], x[0]), x[1])).cache()
-grad_scale = sc.broadcast(1.0/trainRDDCached.count())
-
-model = BASELINE
-print(f"BASELINE:  Loss = {crossEntropyLoss(augmentedRDD,model)}")
-for idx in range(nSteps):
-    print("----------")
-    print(f"STEP: {idx+1}")
-    model = GDUpdate(augmentedRDD, model, lr)
-    lr = lr*lr_decay
-    loss = crossEntropyLoss(augmentedRDD, model)
-    print(f"Loss: {loss}")
-    #print(f"Model: {[round(w,3) for w in model]}")
-w_base = model    
-
-# COMMAND ----------
-
-# MAGIC %md ## Evaluation
-
-# COMMAND ----------
-
-W = model
-threshold = 0.515  
-evaluation(trainRDDCached, heldOutRDDCached, W, threshold)
+plt.show()
+print(classification_report(y_true, y_pred, target_names=class_names))
 
 
 # COMMAND ----------
@@ -719,7 +773,7 @@ threshold = 0.54
 #augHeldOutRDD = normedTestRDD.map(lambda x: (np.append([1.0], x[0]), x[1]))
 predRDD = augHeldOutRDD.map(lambda x: 1 if (predicted(W,x[0]) > threshold) else 0)
 #trueRDD = augHeldOutRDD.map(lambda x: x[1])
-y_pred = predRDD.collect()
+#y_pred = predRDD.collect()
 #y_true = trueRDD.collect()
 
 print("F1-score: {}".format(f1_score(y_true, y_pred, average='micro')))
@@ -738,3 +792,14 @@ plt.show()
 
 from sklearn.metrics import fbeta_score
 fbeta_score(y_true, y_pred, average='weighted', beta=2.0)
+
+# COMMAND ----------
+
+df = df.orderBy('FL_DATE', 'CRS_DEP_TIME')
+print(df.columns)
+from pandas.plotting import lag_plot
+df1 = df.filter(col('ORIGIN') == 1)
+df1 = df1.toPandas()
+plt.figure()
+lag_plot(df1['DEP_DELAY'], lag=2)
+plt.show()

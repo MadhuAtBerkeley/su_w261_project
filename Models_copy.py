@@ -84,7 +84,7 @@ train_simple = 3
 # 0 no change
 # 1 oversample
 # 2 undersample
-sample_flag = 0
+sample_flag = 2
 
 # COMMAND ----------
 
@@ -209,7 +209,7 @@ sqlContext = SQLContext(sc)
 
 # COMMAND ----------
 
-df = sqlContext.sql("""SELECT *,HOUR(dep_datetime_scheduled) H_DEP FROM airlines_with_features_sql""")
+df = sqlContext.sql("""SELECT * FROM airlines_with_features_sql""")
 
 # COMMAND ----------
 
@@ -229,8 +229,8 @@ print(df.count())
 # calculate the ratio of the classes
 df_minority = df.where(col('DEP_DEL15') == 1)
 df_majority = df.where(col('DEP_DEL15') == 0)
-major = df_majority.count()
-minor = df_minority.count()
+major = 4 # df_majority.count()
+minor = 1.0 #df_minority.count()
 ratio = int(major/minor)
 print(f'There are {ratio} times more flights not delayed than flights delayed')
 print(f'Number of records of flights delayed: {minor}')
@@ -256,11 +256,133 @@ print(get_dtype(df,'string'))
 
 # COMMAND ----------
 
+from pyspark.sql.types import IntegerType, DoubleType
+from pyspark.sql.functions import udf, struct
+from pyspark.sql.functions import weekofyear
+
+def quantize_time(x):
+    xH = int(x/100)
+    xM = x%100
+    xM = 15*int((xM+7)/15)
+    return int(xH*100+xM)
+  
+def flight_duration(x, y):
+   
+    xH = int(x/100)
+    yH = int(y/100)
+    xM = x % 100
+    yM = y % 100
+    if(x > y):
+        fl_time = int((xH-yH)*60+(xM-yM))
+    else:
+        xM = 60 + xM
+        fl_time = int((23+xH-yH)*60+(xM-yM))
+      
+    return fl_time
+
+
+comp_fn = udf(flight_duration, IntegerType())
+quant_time = udf(quantize_time, IntegerType())
+
+
+
+df = df.withColumn("FLIGHT_TIME_MINS", comp_fn("CRS_ARR_TIME","CRS_DEP_TIME")) \
+       .withColumn("WEEK_OF_YEAR", weekofyear("FL_DATE")) \
+       .withColumn("CRS_DEP_TIME_QUANT", quant_time("CRS_DEP_TIME")) 
+
+
+print(df.columns)
+
+# COMMAND ----------
+
+features = ['proxy_origin', 'proxy_dest', 'DEP_CNT', 'DST_CNT', 'DAY_OF_WEEK', 'WEEK_OF_YEAR', 'CRS_DEP_TIME_QUANT', 'FLIGHT_TIME_MINS',  'YEAR', 'DISTANCE']
+df_delay_origin = df.groupBy("proxy_origin").sum("DEP_DEL15")
+df_delay_dest = df.groupBy("proxy_dest").sum("DEP_DEL15")
+df_delay_depcnt = df.groupBy("DEP_CNT").sum("DEP_DEL15")
+df_delay_dstcnt = df.groupBy("DST_CNT").sum("DEP_DEL15")
+df_delay_day = df.groupBy("DAY_OF_WEEK").sum("DEP_DEL15")
+df_delay_week = df.groupBy("WEEK_OF_YEAR").sum("DEP_DEL15")
+df_delay_time = df.groupBy("CRS_DEP_TIME_QUANT").sum("DEP_DEL15")
+df_delay_year = df.groupBy("YEAR").sum("DEP_DEL15")
+
+
+avg_delay_day = df_delay_day.select(['DAY_OF_WEEK', 'sum(DEP_DEL15)']).rdd.map(lambda x: (x[0], x[1])).collect()
+avg_delay_week = df_delay_week.select(['WEEK_OF_YEAR', 'sum(DEP_DEL15)']).rdd.map(lambda x: (x[0], x[1])).collect()
+avg_delay_origin = df_delay_origin.select(['proxy_origin', 'sum(DEP_DEL15)']).rdd.map(lambda x:(x[0], x[1])).collect()
+avg_delay_time = df_delay_time.select(['CRS_DEP_TIME_QUANT', 'sum(DEP_DEL15)']).rdd.map(lambda x:(x[0], x[1])).collect()
+avg_delay_dest = df_delay_dest.select(['proxy_dest', 'sum(DEP_DEL15)']).rdd.map(lambda x:(x[0], x[1])).collect()
+avg_delay_depcnt = df_delay_depcnt.select(['DEP_CNT', 'sum(DEP_DEL15)']).rdd.map(lambda x: (x[0], x[1])).collect()
+avg_delay_dstcnt = df_delay_dstcnt.select(['DST_CNT', 'sum(DEP_DEL15)']).rdd.map(lambda x: (x[0], x[1])).collect()
+avg_delay_year = df_delay_year.select(['YEAR', 'sum(DEP_DEL15)']).rdd.map(lambda x:(x[0], x[1])).collect()
+
+
+
+                                                                                  
+avg_delay_day = {x[0]:x[1] for x in avg_delay_day}    
+avg_delay_week = {x[0]:x[1] for x in avg_delay_week}                                                                                   
+avg_delay_origin = {x[0]:x[1] for x in avg_delay_origin} 
+avg_delay_time = {x[0]:x[1] for x in avg_delay_time} 
+avg_delay_dest = {x[0]:x[1] for x in avg_delay_dest}    
+
+avg_delay_depcnt = {x[0]:x[1] for x in avg_delay_depcnt}    
+avg_delay_dstcnt = {x[0]:x[1] for x in avg_delay_dstcnt}                                                                                   
+avg_delay_year = {x[0]:x[1] for x in avg_delay_year} 
+  
+
+
+
+# COMMAND ----------
+
+def target_en_day(x):
+   return avg_delay_day[x]
+  
+def target_en_week(x):
+   return avg_delay_week[x]
+  
+def target_en_time(x):
+   return avg_delay_time[x]
+  
+def target_en_dest(x):
+   return avg_delay_dest[x]
+  
+def target_en_origin(x):
+   return avg_delay_origin[x] 
+  
+def target_en_depcnt(x):
+   return avg_delay_depcnt[x]
+  
+def target_en_dstcnt(x):
+   return avg_delay_dstcnt[x]
+  
+def target_en_year(x):
+   return avg_delay_year[x]   
+  
+call_fn_day = udf(target_en_day, DoubleType())  
+call_fn_week = udf(target_en_week, DoubleType())
+call_fn_time = udf(target_en_time, DoubleType())
+call_fn_dest = udf(target_en_dest, DoubleType())
+call_fn_origin = udf(target_en_origin, DoubleType())
+call_fn_depcnt = udf(target_en_depcnt, DoubleType())  
+call_fn_dstcnt = udf(target_en_dstcnt, DoubleType())
+call_fn_year = udf(target_en_year, DoubleType())
+
+
+df1 =  df.withColumn('proxy_origin', call_fn_origin('proxy_origin')) \
+        .withColumn('CRS_DEP_TIME_QUANT', call_fn_time('CRS_DEP_TIME_QUANT')) \
+        .withColumn('WEEK_OF_YEAR', call_fn_week('WEEK_OF_YEAR')) \
+        .withColumn('DAY_OF_WEEK', call_fn_day('DAY_OF_WEEK')) \
+        .withColumn('proxy_dest', call_fn_dest('proxy_dest')) \
+        .withColumn('DST_CNT', call_fn_dstcnt('DST_CNT')) \
+        .withColumn('DEP_CNT', call_fn_depcnt('DEP_CNT')) \
+        .withColumn('YEAR_ENC', call_fn_year('YEAR')) 
+
+# COMMAND ----------
+
 # MAGIC %md ### FEATURES USED
 
 # COMMAND ----------
 
-numericCols =   ['ORPageRank', 'proxy_origin', 'proxy_dest','carrier_delay','airport_delay','H_DEP','Src_WND_0', 'Src_WND_1', 'Src_WND_3', 'Src_WND_4', 'Src_CIG_0', 'Src_CIG_1', 'Src_VIS_0', 'Src_VIS_1', 'Src_VIS_2', 'Src_VIS_3', 'Src_TMP_0', 'Src_TMP_1', 'Src_DEW_0', 'Src_DEW_1', 'Src_SLP_0', 'Src_SLP_1', 'Src_GA1_0', 'Src_GA1_1', 'Src_GA1_2', 'Src_GA1_3', 'Src_GA1_4', 'Src_GA1_5', 'Dst_WND_0', 'Dst_WND_1', 'Dst_WND_3', 'Dst_WND_4', 'Dst_CIG_0', 'Dst_CIG_1', 'Dst_VIS_0', 'Dst_VIS_1', 'Dst_VIS_2', 'Dst_VIS_3', 'Dst_TMP_0', 'Dst_TMP_1', 'Dst_DEW_0', 'Dst_DEW_1', 'Dst_SLP_0', 'Dst_SLP_1', 'Dst_GA1_0', 'Dst_GA1_1', 'Dst_GA1_2', 'Dst_GA1_3', 'Dst_GA1_4', 'Dst_GA1_5','DEP_CNT', 'DST_CNT', 'DESTPageRank', 'DAY_OF_MONTH', 'DAY_OF_WEEK','YEAR', 'QUARTER', 'MONTH' , 'LATE_AIRCRAFT_DELAY','DISTANCE']
+numericCols =   ['ORPageRank', 'proxy_origin', 'proxy_dest', 'Src_WND_0', 'Src_WND_1', 'Src_WND_3', 'Src_WND_4', 'Src_CIG_0', 'Src_CIG_1', 'Src_VIS_0', 'Src_VIS_1', 'Src_VIS_2', 'Src_VIS_3', 'Src_TMP_0', 'Src_TMP_1', 'Src_DEW_0', 'Src_DEW_1', 'Src_SLP_0', 'Src_SLP_1', 'Src_GA1_0', 'Src_GA1_1', 'Src_GA1_2', 'Src_GA1_3', 'Src_GA1_4', 'Src_GA1_5', 'Dst_WND_0', 'Dst_WND_1', 'Dst_WND_3', 'Dst_WND_4', 'Dst_CIG_0', 'Dst_CIG_1', 'Dst_VIS_0', 'Dst_VIS_1', 'Dst_VIS_2', 'Dst_VIS_3', 'Dst_TMP_0', 'Dst_TMP_1', 'Dst_DEW_0', 'Dst_DEW_1', 'Dst_SLP_0', 'Dst_SLP_1', 'Dst_GA1_0', 'Dst_GA1_1', 'Dst_GA1_2', 'Dst_GA1_3', 'Dst_GA1_4', 'Dst_GA1_5','DEP_CNT', 'DST_CNT', 'DESTPageRank', 'DAY_OF_WEEK','YEAR', 'DISTANCE'] #, 'FLIGHT_TIME_MINS', 'WEEK_OF_YEAR', 'CRS_DEP_TIME_QUANT']
 
 categoricalColumns = ['OP_CARRIER']
 
@@ -332,6 +454,10 @@ df = assembler.transform(df)
 
 # COMMAND ----------
 
+df.count()
+
+# COMMAND ----------
+
 # MAGIC %md ## TRAIN/TEST
 
 # COMMAND ----------
@@ -368,7 +494,11 @@ if train_simple == 3:
 
 # COMMAND ----------
 
-train = sample_df(train,ratio,sample_flag)
+#train = sample_df(train,ratio,2)
+df_minority = train.where(col('DEP_DEL15') == 1)
+df_majority = train.where(col('DEP_DEL15') == 0)
+df_sampled_major = df_majority.sample(False, 0.25)
+train = df_sampled_major.union(df_minority)
 
 # COMMAND ----------
 
@@ -412,7 +542,7 @@ plt.show()
 
 # COMMAND ----------
 
-predictions = lrModel.transform(test)
+predictions = lrModel.transform(dev)
 display(predictions[["label","prediction"]])
 
 # COMMAND ----------
@@ -446,11 +576,21 @@ print(class_names)
 
 # COMMAND ----------
 
-y_true = predictions.select("label")
-y_true = y_true.toPandas()
-y_pred = predictions.select("prediction")
-y_pred = y_pred.toPandas()
-cnf_matrix = confusion_matrix(y_true, y_pred)
+y_true = predictions.select("label").collect()
+
+y_pred = predictions.select("prediction").collect()
+
+#cnf_matrix = confusion_matrix(y_true, y_pred)
+
+# COMMAND ----------
+
+print(predictions.select("label").count())
+print(predictions.select("prediction").count())
+#cnf_matrix = confusion_matrix(y_true, y_pred)
+
+# COMMAND ----------
+
+print(len(y_true), len(y_pred))
 
 # COMMAND ----------
 
